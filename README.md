@@ -12,9 +12,11 @@ SSH 接続先のファイルは読み取り専用です。色分けには Herdr 
 
 ## クイックスタート
 
-[Herdr デスクトップアプリ](https://herdr.dev/)を起動し、このリポジトリのルートで PowerShell を開きます。手順は Windows 版 Herdr 0.1.15 で確認しています。
+[Herdr デスクトップアプリ](https://herdr.dev/)を起動し、このリポジトリのルートで、お使いの OS に対応したシェルを開きます。Windows の手順は Herdr 0.1.15 で確認しています。
 
-### 設定フォルダーを指定する
+### Windows（PowerShell）
+
+#### 設定フォルダーを指定する
 
 インストール時とアンインストール時に、以下を実行します。
 
@@ -30,7 +32,7 @@ $modPath = Join-Path $herdrAppHome 'mods/files-markdown'
 $layoutPath = Join-Path $herdrAppHome 'layouts/main-markdown.json'
 ```
 
-### インストール
+#### インストール
 
 Mod と同梱のレイアウトを Herdr の設定フォルダーへコピーし、`main-markdown` に切り替えます。
 
@@ -45,7 +47,7 @@ herdr-app do layout.switch --name main-markdown
 
 Herdr のタブバーで **Files** を開き、Markdown ファイルを選択します。
 
-### アンインストール
+#### アンインストール
 
 編集中のファイルがあれば保存し、標準レイアウトに切り替えてから、インストールした Mod とレイアウトを削除します。
 
@@ -60,6 +62,53 @@ if (Test-Path -LiteralPath $layoutPath) {
 if (Test-Path -LiteralPath $modPath) {
     Remove-Item -LiteralPath $modPath -Recurse -ErrorAction Stop
 }
+```
+
+### WSL／Linux・macOS（Bash／Zsh）
+
+この手順は Herdr のデスクトップアプリを実行している Linux または macOS のシェルで実行します。WSL 内で Linux 版 Herdr を使う場合も同じ手順です。Windows 版 Herdr から WSL のターミナルを開いている場合は、Windows 側の PowerShell で上の手順を実行します。
+
+#### 設定フォルダーを指定する
+
+インストール時とアンインストール時に、以下を実行します。設定フォルダーは `HERDR_APP_HOME`、`XDG_CONFIG_HOME/herdr-app`、`$HOME/.config/herdr-app` の順で選択します。 [Herdr の設定フォルダー](https://github.com/herdrdev/herdr-app/blob/master/docs/security.md#what-stays-on-disk)
+
+```sh
+herdr_app_home="${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}"
+mod_path="$herdr_app_home/mods/files-markdown"
+layout_path="$herdr_app_home/layouts/main-markdown.json"
+```
+
+#### インストール
+
+Mod と同梱のレイアウトをコピーし、`main-markdown` に切り替えます。
+
+```sh
+(
+    set -e
+    if [ -e "$mod_path" ] || [ -L "$mod_path" ] ||
+       [ -e "$layout_path" ] || [ -L "$layout_path" ]; then
+        printf '%s\n' 'files-markdown または main-markdown が既にあります。' >&2
+        exit 1
+    fi
+    cp -R mods/files-markdown "$mod_path"
+    cp layouts/main-markdown.json "$layout_path"
+    herdr-app do layout.switch --name main-markdown
+)
+```
+
+Herdr のタブバーで **Files** を開き、Markdown ファイルを選択します。
+
+#### アンインストール
+
+編集中のファイルを保存し、標準レイアウトに切り替えてから、インストールした Mod とレイアウトを削除します。
+
+```sh
+(
+    set -e
+    herdr-app do layout.switch --name main
+    rm -f "$layout_path"
+    rm -rf "$mod_path"
+)
 ```
 
 ## フォルダー構造
