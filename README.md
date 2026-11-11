@@ -2,22 +2,18 @@
 
 Herdr デスクトップアプリの右側にある **Files** パネルを拡張する Mod です。ターミナルで開いているフォルダーのファイルを、Herdr のウィンドウ内で閲覧・編集できます。
 
-## 概要
+# 概要
 
 - `.md` と `.markdown` は **Preview** で開き、**Source** で原文を表示します。長いソース行はペインの幅で折り返します。
 - PNG、JPEG、GIF、WebP、SVG を選択すると、Files 内に画像を表示します。SVG は **Source** で原文を表示・編集し、保存後に **Preview** へ戻れます。
-- ローカルの UTF-8 テキストは **Edit** で編集できます。**Save** で保存し、**Cancel** で編集を取り消します。Markdown は保存前の内容も **Preview** で確認できます。外部でファイルが更新された場合は、保存を中止して下書きを保持します。
+- ローカルの UTF-8 テキストは **Edit** で編集できます。**Save** で保存し、**Cancel** で編集を取り消します。Markdown は保存前の内容も **Preview** で確認できます。外部でファイルが更新された場合は、保存を中止して下書きを保持します。(SSH 接続先のファイルは読み取り専用です。)
 - ソース表示と編集画面は拡張子に応じて色分けします。`.bashrc` や `.zshrc` も判定します。Markdown 内の独立したコードブロックは、`bash`、`zsh`、`python` などの言語名を指定し、前後の本文と空行で区切ると色が付きます。
 
-SSH 接続先のファイルは読み取り専用です。色分けには Herdr 内蔵の言語定義を使います。Herdr 0.1.15 の標準ビルドでは PowerShell のコードは単色で表示されます。参照リンク定義や HTML を含む Markdown のプレビューには Herdr 標準の描画を使います。
+# クイックスタート
 
-画像は Herdr の描画用に `data/files-preview` へ一時コピーし、別のファイルへ移るとコピーを削除します。ローカル画像は最大 16 MiB、SSH 接続先の画像は最大 4 MiB です。ローカルの Unix 環境では `sh`、`wc`、`cp` を使い、Windows では PowerShell を使います。SSH 接続先の Unix 環境では `sh`、`wc`、`head`、`base64` を使い、Windows では PowerShell を使います。SSH から受け取った画像はローカルの `base64` または PowerShell で復元します。
+[Herdr デスクトップアプリ](https://herdr.dev/)を起動し、このリポジトリのルートで、お使いの OS に対応したシェルを開きます。
 
-## クイックスタート
-
-[Herdr デスクトップアプリ](https://herdr.dev/)を起動し、このリポジトリのルートで、お使いの OS に対応したシェルを開きます。Windows の手順は Herdr 0.1.15 で確認しています。
-
-### Windows（PowerShell）
+## Windows（PowerShell）
 
 #### 設定フォルダーを指定する
 
@@ -71,7 +67,9 @@ if (Test-Path -LiteralPath $imageCachePath) {
 }
 ```
 
-### WSL／Linux・macOS（Bash／Zsh）
+---
+
+## WSL／Linux・macOS（Bash／Zsh）
 
 この手順は Herdr のデスクトップアプリを実行している Linux または macOS のシェルで実行します。WSL 内で Linux 版 Herdr を使う場合も同じ手順です。Windows 版 Herdr から WSL のターミナルを開いている場合は、Windows 側の PowerShell で上の手順を実行します。
 
@@ -120,7 +118,9 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
 )
 ```
 
-## フォルダー構造
+---
+
+# フォルダー構造
 
 ```text
 .
