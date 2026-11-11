@@ -28,21 +28,21 @@ $herdrAppHome = if ($env:HERDR_APP_HOME) {
 } else {
     Join-Path $HOME '.config/herdr-app'
 }
-$modPath = Join-Path $herdrAppHome 'mods/files-markdown'
-$layoutPath = Join-Path $herdrAppHome 'layouts/main-markdown.json'
+$modPath = Join-Path $herdrAppHome 'mods/files-preview'
+$layoutPath = Join-Path $herdrAppHome 'layouts/files-preview.json'
 ```
 
 #### インストール
 
-Mod と同梱のレイアウトを Herdr の設定フォルダーへコピーし、`main-markdown` に切り替えます。
+Mod と同梱のレイアウトを Herdr の設定フォルダーへコピーし、`files-preview` に切り替えます。
 
 ```powershell
 if ((Test-Path -LiteralPath $modPath) -or (Test-Path -LiteralPath $layoutPath)) {
-    throw 'files-markdown または main-markdown が既にあります。'
+    throw 'files-preview または files-preview が既にあります。'
 }
-Copy-Item -LiteralPath 'mods/files-markdown' -Destination $modPath -Recurse -ErrorAction Stop
-Copy-Item -LiteralPath 'layouts/main-markdown.json' -Destination $layoutPath -ErrorAction Stop
-herdr-app do layout.switch --name main-markdown
+Copy-Item -LiteralPath 'mods/files-preview' -Destination $modPath -Recurse -ErrorAction Stop
+Copy-Item -LiteralPath 'layouts/files-preview.json' -Destination $layoutPath -ErrorAction Stop
+herdr-app do layout.switch --name files-preview
 ```
 
 Herdr のタブバーで **Files** を開き、Markdown ファイルを選択します。
@@ -74,25 +74,25 @@ if (Test-Path -LiteralPath $modPath) {
 
 ```sh
 herdr_app_home="${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}"
-mod_path="$herdr_app_home/mods/files-markdown"
-layout_path="$herdr_app_home/layouts/main-markdown.json"
+mod_path="$herdr_app_home/mods/files-preview"
+layout_path="$herdr_app_home/layouts/files-preview.json"
 ```
 
 #### インストール
 
-Mod と同梱のレイアウトをコピーし、`main-markdown` に切り替えます。
+Mod と同梱のレイアウトをコピーし、`files-preview` に切り替えます。
 
 ```sh
 (
     set -e
     if [ -e "$mod_path" ] || [ -L "$mod_path" ] ||
        [ -e "$layout_path" ] || [ -L "$layout_path" ]; then
-        printf '%s\n' 'files-markdown または main-markdown が既にあります。' >&2
+        printf '%s\n' 'files-preview または files-preview が既にあります。' >&2
         exit 1
     fi
-    cp -R mods/files-markdown "$mod_path"
-    cp layouts/main-markdown.json "$layout_path"
-    herdr-app do layout.switch --name main-markdown
+    cp -R mods/files-preview "$mod_path"
+    cp layouts/files-preview.json "$layout_path"
+    herdr-app do layout.switch --name files-preview
 )
 ```
 
@@ -118,9 +118,9 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
 ├── README.md
 ├── LICENSE
 ├── layouts/
-│   └── main-markdown.json       # 拡張した Files パネルを使うレイアウト
+│   └── files-preview.json       # 拡張した Files パネルを使うレイアウト
 └── mods/
-    └── files-markdown/
+    └── files-preview/
         ├── main.js             # ファイルツリー、プレビュー、編集の実装
         ├── mod.json            # Herdr の Mod マニフェスト
         ├── chevron-down.svg
@@ -132,4 +132,4 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
 
 ## ライセンス
 
-この Mod とレイアウトは、[Herdr の標準 Files Mod と main レイアウト](https://github.com/herdrdev/herdr-app/tree/v0.1.15/defaults)を改変したものです。[Apache License 2.0](LICENSE) に従います。アイコンのライセンスは [LICENSE-Lucide.txt](mods/files-markdown/LICENSE-Lucide.txt) を参照してください。
+この Mod とレイアウトは、[Herdr の標準 Files Mod と main レイアウト](https://github.com/herdrdev/herdr-app/tree/v0.1.15/defaults)を改変したものです。[Apache License 2.0](LICENSE) に従います。アイコンのライセンスは [LICENSE-Lucide.txt](mods/files-preview/LICENSE-Lucide.txt) を参照してください。
