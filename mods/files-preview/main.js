@@ -1,9 +1,10 @@
 // A lazy file browser and editor for the focused pane's folder.
-// Adapted from Herdr's Files mod to add Markdown and image previews, wrapping, and editing.
+// Adapted from Herdr's Files mod to add Markdown, CSV, and image previews, wrapping, and editing.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState, TextView } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window } from "herdr";
 import { isImage, loadImage, releaseImage } from "./images.js";
+import { csvTable } from "./csv.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -279,10 +280,20 @@ export default class Files extends View {
   }
 
   updatePreview() {
-    if (!this.document.isMarkdown) return;
-    const text = previewText(this.document.draft?.text ?? this.document.text);
+    const isCsv = this.document.ext === "csv";
+    if (!this.document.isMarkdown && !isCsv) return;
+    const source = this.document.draft?.text ?? this.document.text;
+    const text = isCsv ? source : previewText(source);
     if (this.preview?.text === text) return;
     this.releasePreview();
+    if (isCsv) {
+      try {
+        this.preview = { text, html: csvTable(text) };
+      } catch (error) {
+        this.preview = { text, error: error.message };
+      }
+      return;
+    }
     const sections = markdownSections(text).filter(section => section.language || section.markdown.trim());
     this.preview = { text, sections: sections.map(section => section.language
       ? { ...section, editor: codeEditor(section.code, section.language, true, true) }
@@ -357,7 +368,7 @@ export default class Files extends View {
 
   previewMode(label, source, t) {
     const selected = this.showSource === source;
-    return Button.new(source ? "markdown-source" : "markdown-preview").px(10).py(4).rounded(6)
+    return Button.new(source ? "file-source" : "file-preview").px(10).py(4).rounded(6)
       .cursor_pointer().text_size(12).font_semibold().text_color(selected ? t.foreground : t.muted)
       .when(selected, el => el.bg(t.selected))
       .hover(s => s.bg(selected ? t.selected : t.hover))
@@ -380,6 +391,13 @@ export default class Files extends View {
   }
 
   renderPreview(t) {
+    if (this.document.ext === "csv") {
+      if (this.preview.error || !this.preview.html) {
+        return div().p(12).text_color(t.dim).child(this.preview.error || "Empty CSV file.");
+      }
+      return TextView.html(`csv-${this.file}`, this.preview.html).selectable(true).scrollable(true)
+        .flex_1().min_h(0).min_w(0).p(16);
+    }
     const { text, sections } = this.preview;
     const id = `markdown-${this.file}`;
     if (!sections.length) return TextView.markdown(id, text).selectable(true).scrollable(true)
@@ -408,14 +426,15 @@ export default class Files extends View {
     if (!this.code) return div().p(12).text_color(t.dim).child(this.fileError || "Loading file…");
 
     const { isMarkdown, draft } = this.document;
-    const canEdit = !this.on && (!isMarkdown || this.showSource);
-    const content = isMarkdown && !this.showSource
+    const hasPreview = isMarkdown || this.document.ext === "csv";
+    const canEdit = !this.on && (!hasPreview || this.showSource);
+    const content = hasPreview && !this.showSource
       ? this.renderPreview(t)
       : Editor.new(this.code).flex_1().min_h(0);
     return v_flex().flex_1().min_h(0).min_w(0)
-      .when(isMarkdown || canEdit || isSvg, el => el.child(h_flex().flex_none().items_center()
+      .when(hasPreview || canEdit || isSvg, el => el.child(h_flex().flex_none().items_center()
         .px(10).py(5).gap(4).border_b(1).border_color(t.border)
-        .when(isMarkdown, bar => bar.child(this.previewMode("Preview", false, t)).child(this.previewMode("Source", true, t)))
+        .when(hasPreview, bar => bar.child(this.previewMode(isMarkdown ? "Preview" : "Table", false, t)).child(this.previewMode("Source", true, t)))
         .when(isSvg, bar => bar.child(this.fileAction("Preview", cx => this.imageMode(false, cx), t, { disabled: Boolean(draft) })))
         .child(div().flex_1())
         .when(canEdit && !draft, bar => bar.child(this.fileAction("Edit", this.edit, t)))
