@@ -5,10 +5,13 @@ Herdr デスクトップアプリの右側にある **Files** パネルを拡張
 ## 概要
 
 - `.md` と `.markdown` は **Preview** で開き、**Source** で原文を表示します。長いソース行はペインの幅で折り返します。
+- PNG、JPEG、GIF、WebP、SVG を選択すると、Files 内に画像を表示します。SVG は **Source** で原文を表示・編集し、保存後に **Preview** へ戻れます。
 - ローカルの UTF-8 テキストは **Edit** で編集できます。**Save** で保存し、**Cancel** で編集を取り消します。Markdown は保存前の内容も **Preview** で確認できます。外部でファイルが更新された場合は、保存を中止して下書きを保持します。
 - ソース表示と編集画面は拡張子に応じて色分けします。`.bashrc` や `.zshrc` も判定します。Markdown 内の独立したコードブロックは、`bash`、`zsh`、`python` などの言語名を指定し、前後の本文と空行で区切ると色が付きます。
 
 SSH 接続先のファイルは読み取り専用です。色分けには Herdr 内蔵の言語定義を使います。Herdr 0.1.15 の標準ビルドでは PowerShell のコードは単色で表示されます。参照リンク定義や HTML を含む Markdown のプレビューには Herdr 標準の描画を使います。
+
+画像は Herdr の描画用に `data/files-preview` へ一時コピーし、別のファイルへ移るとコピーを削除します。ローカル画像は最大 16 MiB、SSH 接続先の画像は最大 4 MiB です。ローカルの Unix 環境では `sh`、`wc`、`cp` を使い、Windows では PowerShell を使います。SSH 接続先の Unix 環境では `sh`、`wc`、`head`、`base64` を使い、Windows では PowerShell を使います。SSH から受け取った画像はローカルの `base64` または PowerShell で復元します。
 
 ## クイックスタート
 
@@ -30,6 +33,7 @@ $herdrAppHome = if ($env:HERDR_APP_HOME) {
 }
 $modPath = Join-Path $herdrAppHome 'mods/files-preview'
 $layoutPath = Join-Path $herdrAppHome 'layouts/files-preview.json'
+$imageCachePath = Join-Path $herdrAppHome 'data/files-preview'
 ```
 
 #### インストール
@@ -38,7 +42,7 @@ Mod と同梱のレイアウトを Herdr の設定フォルダーへコピーし
 
 ```powershell
 if ((Test-Path -LiteralPath $modPath) -or (Test-Path -LiteralPath $layoutPath)) {
-    throw 'files-preview または files-preview が既にあります。'
+    throw 'files-preview の Mod またはレイアウトが既にあります。'
 }
 Copy-Item -LiteralPath 'mods/files-preview' -Destination $modPath -Recurse -ErrorAction Stop
 Copy-Item -LiteralPath 'layouts/files-preview.json' -Destination $layoutPath -ErrorAction Stop
@@ -62,6 +66,9 @@ if (Test-Path -LiteralPath $layoutPath) {
 if (Test-Path -LiteralPath $modPath) {
     Remove-Item -LiteralPath $modPath -Recurse -ErrorAction Stop
 }
+if (Test-Path -LiteralPath $imageCachePath) {
+    Remove-Item -LiteralPath $imageCachePath -Recurse -ErrorAction Stop
+}
 ```
 
 ### WSL／Linux・macOS（Bash／Zsh）
@@ -76,6 +83,7 @@ if (Test-Path -LiteralPath $modPath) {
 herdr_app_home="${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}"
 mod_path="$herdr_app_home/mods/files-preview"
 layout_path="$herdr_app_home/layouts/files-preview.json"
+image_cache_path="$herdr_app_home/data/files-preview"
 ```
 
 #### インストール
@@ -87,7 +95,7 @@ Mod と同梱のレイアウトをコピーし、`files-preview` に切り替え
     set -e
     if [ -e "$mod_path" ] || [ -L "$mod_path" ] ||
        [ -e "$layout_path" ] || [ -L "$layout_path" ]; then
-        printf '%s\n' 'files-preview または files-preview が既にあります。' >&2
+        printf '%s\n' 'files-preview の Mod またはレイアウトが既にあります。' >&2
         exit 1
     fi
     cp -R mods/files-preview "$mod_path"
@@ -108,6 +116,7 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
     herdr-app do layout.switch --name main
     rm -f "$layout_path"
     rm -rf "$mod_path"
+    rm -rf "$image_cache_path"
 )
 ```
 
@@ -122,6 +131,7 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
 └── mods/
     └── files-preview/
         ├── main.js             # ファイルツリー、プレビュー、編集の実装
+        ├── images.js           # 画像の読み込み、一時コピー、削除
         ├── mod.json            # Herdr の Mod マニフェスト
         ├── chevron-down.svg
         ├── chevron-right.svg

@@ -1,8 +1,9 @@
 // A lazy file browser and editor for the focused pane's folder.
-// Adapted from Herdr's Files mod to add Markdown previews, wrapping, and editing.
-import { View, div, svg } from "gpui-kit";
+// Adapted from Herdr's Files mod to add Markdown and image previews, wrapping, and editing.
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState, TextView } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window } from "herdr";
+import { isImage, loadImage, releaseImage } from "./images.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -209,6 +210,8 @@ export default class Files extends View {
     this.code?.release();
     this.code = null;
     this.releasePreview();
+    releaseImage(this.imagePreview);
+    this.imagePreview = null;
     this.document = null;
     this.file = path;
     this.fileError = null;
@@ -223,16 +226,36 @@ export default class Files extends View {
           if (isCurrent()) this.openDocument(restored);
           return;
         }
+        const filename = path.split("/").pop();
+        const ext = filename.includes(".") ? filename.split(".").pop().toLowerCase() : "txt";
+        if (isImage(ext) && !source) {
+          const preview = await loadImage(`${root}/${path}`, ext, on);
+          if (isCurrent()) this.imagePreview = preview;
+          else await releaseImage(preview);
+          return;
+        }
         const text = await readTextFile(`${root}/${path}`, { on });
         if (!isCurrent()) return;
         if (text === null) { this.fileError = "This file is no longer available"; return; }
         if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
-        const filename = path.split("/").pop();
-        const ext = filename.includes(".") ? filename.split(".").pop().toLowerCase() : "txt";
         this.openDocument({ text, ext, isMarkdown: ext === "md" || ext === "markdown", draft: null });
-      } catch { if (isCurrent()) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
+      } catch (error) {
+        if (isCurrent()) this.fileError = isImage(path.split(".").pop().toLowerCase()) && !source
+          ? error.message : "Cannot preview this file (binary, too large, or unreadable)";
+      }
       finally { cx.notify(); }
     });
+  }
+
+  async close() {
+    this.fileRequest = {};
+    await releaseImage(this.imagePreview);
+  }
+
+  imageMode(source, cx) {
+    if (this.document?.draft) return;
+    this.show(this.file, cx, null, source);
+    cx.notify();
   }
 
   openDocument(document) {
@@ -371,6 +394,17 @@ export default class Files extends View {
   }
 
   renderFile(t) {
+    const isSvg = this.file?.split(".").pop().toLowerCase() === "svg";
+    if (this.imagePreview || (isSvg && !this.showSource)) {
+      return v_flex().flex_1().min_h(0).min_w(0)
+        .when(isSvg, el => el.child(h_flex().flex_none().px(10).py(5)
+          .border_b(1).border_color(t.border)
+          .child(this.fileAction("Source", cx => this.imageMode(true, cx), t))))
+        .child(this.imagePreview
+          ? div().id("image-preview").flex_1().min_h(0).min_w(0).p(16)
+            .child(image(this.imagePreview.asset).size_full())
+          : div().p(12).text_color(t.dim).child(this.fileError || "Loading image…"));
+    }
     if (!this.code) return div().p(12).text_color(t.dim).child(this.fileError || "Loading file…");
 
     const { isMarkdown, draft } = this.document;
@@ -379,9 +413,10 @@ export default class Files extends View {
       ? this.renderPreview(t)
       : Editor.new(this.code).flex_1().min_h(0);
     return v_flex().flex_1().min_h(0).min_w(0)
-      .when(isMarkdown || canEdit, el => el.child(h_flex().flex_none().items_center()
+      .when(isMarkdown || canEdit || isSvg, el => el.child(h_flex().flex_none().items_center()
         .px(10).py(5).gap(4).border_b(1).border_color(t.border)
         .when(isMarkdown, bar => bar.child(this.previewMode("Preview", false, t)).child(this.previewMode("Source", true, t)))
+        .when(isSvg, bar => bar.child(this.fileAction("Preview", cx => this.imageMode(false, cx), t, { disabled: Boolean(draft) })))
         .child(div().flex_1())
         .when(canEdit && !draft, bar => bar.child(this.fileAction("Edit", this.edit, t)))
         .when(Boolean(draft), bar => bar
