@@ -119,6 +119,8 @@ async function directory(path, on) {
 export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
+    this.filter = InputState.new({ value: "", placeholder: "Filter by name or extension (.csv)" });
+    this.filter.on("change", (_event, cx) => cx.notify());
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
@@ -156,6 +158,7 @@ export default class Files extends View {
       });
       const saved = this.saved.get(next);
       this.clearOperation();
+      this.filter.set_value("");
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
@@ -254,6 +257,7 @@ export default class Files extends View {
   async close() {
     this.fileRequest = {};
     this.clearOperation();
+    this.filter?.release();
     await releaseImage(this.imagePreview);
   }
 
@@ -433,11 +437,35 @@ export default class Files extends View {
     cx.notify();
   }
 
-  rows(prefix, depth, out, t) {
+  filteredPaths() {
+    const query = this.filter.value().trim().toLowerCase();
+    if (!query) return null;
+    const extension = query.startsWith("*.") ? query.slice(1) : query.startsWith(".") ? query : null;
+    const matches = new Set();
+    const visit = (prefix, depth) => {
+      if (depth > 40) return false;
+      let found = false;
+      for (const entry of this.entries.get(prefix) ?? []) {
+        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const childMatches = entry.dir && this.folders.has(path) && visit(path, depth + 1);
+        const name = entry.name.toLowerCase();
+        if (childMatches || (extension ? !entry.dir && name.endsWith(extension) : name.includes(query))) {
+          matches.add(path);
+          found = true;
+        }
+      }
+      return found;
+    };
+    visit("", 0);
+    return matches;
+  }
+
+  rows(prefix, depth, out, t, matches = null) {
     if (out.length >= TOTAL || depth > 40) return out;
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      if (matches && !matches.has(path)) continue;
       out.push(h_flex().id(`file-${path}`).h(30).flex_none().pr(4).gap(4).items_center()
         .child(h_flex().flex_1().min_w(0).h_full().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
@@ -448,7 +476,7 @@ export default class Files extends View {
         .when(!this.on, el => el
           .when(entry.dir, row => row.child(this.fileIcon("Add File", "plus", cx => this.beginCreate(path, cx), t, `add-${path}`)))
           .child(this.fileIcon(entry.dir ? "Delete Folder" : "Delete File", "trash", cx => this.beginDelete(path, entry.dir, cx), t, `delete-${path}`))));
-      if (entry.dir && open) this.rows(path, depth + 1, out, t);
+      if (entry.dir && open) this.rows(path, depth + 1, out, t, matches);
     }
     return out;
   }
@@ -543,6 +571,8 @@ export default class Files extends View {
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
+    const matches = this.filteredPaths();
+    const rows = !this.file && !this.operation ? this.rows("", 0, [], t, matches) : [];
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(Button.new("files-back").w(20).disabled(Boolean(this.document?.draft))
@@ -553,9 +583,12 @@ export default class Files extends View {
           .child(this.fileIcon("Add File", "plus", cx => this.beginCreate("", cx), t)))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
-      .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
-        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
+      .when(!this.file && !this.operation, el => el.child(v_flex().flex_1().min_h(0)
+        .child(div().flex_none().px(8).py(6).child(Input.new(this.filter).h(30).w_full().px(8)
+          .rounded(6).border_1().border_color(t.border).bg(t.background).text_size(12)))
+        .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
+        .when(Boolean(this.error) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))))))
       .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
