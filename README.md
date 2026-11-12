@@ -1,15 +1,8 @@
 # Herdr Files Preview
 
-Herdr デスクトップアプリの右側にある **Files** パネルを拡張する Mod です。ターミナルで開いているフォルダーのファイルを、Herdr のウィンドウ内で閲覧・編集できます。
-
 # 概要
 
-- `.md` と `.markdown` は **Preview** で開き、**Source** で原文を表示します。長いソース行はペインの幅で折り返します。
-- `.csv` は **Table** で開き、先頭のレコードを列見出しとして表形式で表示します。引用符内のカンマ・改行、引用符のエスケープ、UTF-8 BOM に対応します。**Source** で原文を表示・編集し、保存前の内容も **Table** で確認できます。
-- PNG、JPEG、GIF、WebP、SVG を選択すると、Files 内に画像を表示します。SVG は **Source** で原文を表示・編集し、保存後に **Preview** へ戻れます。
-- ローカルの UTF-8 テキストは **Edit** で編集できます。**Save** で保存し、**Cancel** で編集を取り消します。Markdown は保存前の内容も **Preview** で確認できます。外部でファイルが更新された場合は、保存を中止して下書きを保持します。(SSH 接続先のファイルは読み取り専用です。)
-- ローカルでは、Files 上部またはフォルダー行の **Add File** で空のファイルを作成し、そのまま編集できます。各行の **Delete** は確認画面を表示してから完全削除します。フォルダーは中身も削除し、内部のシンボリックリンク・ジャンクションの参照先は削除しません。Windows は PowerShell、Linux・macOS は `sh` と `rm` を使います。
-- ソース表示と編集画面は拡張子に応じて色分けします。`.bashrc` や `.zshrc` も判定します。Markdown 内の独立したコードブロックは、`bash`、`zsh`、`python` などの言語名を指定し、前後の本文と空行で区切ると色が付きます。
+Herdr デスクトップアプリの右側にある **Files** パネルを拡張する Mod です。ターミナルで開いているフォルダーのファイルを、Herdr のウィンドウ内で閲覧・編集できます。
 
 # クイックスタート
 
@@ -47,7 +40,7 @@ Copy-Item -LiteralPath 'layouts/files-preview.json' -Destination $layoutPath -Er
 herdr-app do layout.switch --name files-preview
 ```
 
-Herdr のタブバーで **Files** を開き、Markdown ファイルを選択します。
+Herdr のタブバーで **Files** を開きます。
 
 #### アンインストール
 
@@ -104,7 +97,7 @@ Mod と同梱のレイアウトをコピーし、`files-preview` に切り替え
 )
 ```
 
-Herdr のタブバーで **Files** を開き、Markdown ファイルを選択します。
+Herdr のタブバーで **Files** を開きます。
 
 #### アンインストール
 
@@ -143,6 +136,9 @@ Herdr のタブバーで **Files** を開き、Markdown ファイルを選択し
         ├── chevron-right.svg
         ├── file.svg
         ├── folder.svg
+        ├── pencil.svg
+        ├── plus.svg
+        ├── trash.svg
         └── LICENSE-Lucide.txt  # SVG アイコンのライセンス
 ```
 

@@ -446,8 +446,8 @@ export default class Files extends View {
         .child(div().flex_1().min_w(0).truncate().child(entry.name))
         .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))))
         .when(!this.on, el => el
-          .when(entry.dir, row => row.child(this.fileAction("Add File", cx => this.beginCreate(path, cx), t, { id: `add-${path}` })))
-          .child(this.fileAction("Delete", cx => this.beginDelete(path, entry.dir, cx), t, { id: `delete-${path}` }))));
+          .when(entry.dir, row => row.child(this.fileIcon("Add File", "plus", cx => this.beginCreate(path, cx), t, `add-${path}`)))
+          .child(this.fileIcon(entry.dir ? "Delete Folder" : "Delete File", "trash", cx => this.beginDelete(path, entry.dir, cx), t, `delete-${path}`))));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);
     }
     return out;
@@ -466,6 +466,14 @@ export default class Files extends View {
         cx.notify();
       })
       .child(label);
+  }
+
+  fileIcon(label, icon, handler, t, id = label) {
+    return Button.new(`files-${id}`).size(26).flex_none().p(5).rounded(6)
+      .accessibility_label(label).tooltip(label).cursor_pointer().text_color(t.muted)
+      .hover(s => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => handler.call(this, cx))
+      .child(svg(`mods/files-preview/${icon}.svg`).size(16));
   }
 
   fileAction(label, handler, t, { primary = false, disabled = false, id = label } = {}) {
@@ -524,7 +532,7 @@ export default class Files extends View {
         .when(hasPreview, bar => bar.child(this.previewMode(isMarkdown ? "Preview" : "Table", false, t)).child(this.previewMode("Source", true, t)))
         .when(isSvg, bar => bar.child(this.fileAction("Preview", cx => this.imageMode(false, cx), t, { disabled: Boolean(draft) })))
         .child(div().flex_1())
-        .when(canEdit && !draft, bar => bar.child(this.fileAction("Edit", this.edit, t)))
+        .when(canEdit && !draft, bar => bar.child(this.fileIcon("Edit", "pencil", this.edit, t)))
         .when(Boolean(draft), bar => bar
           .child(this.fileAction("Cancel", this.cancel, t, { disabled: draft.saving }))
           .child(this.fileAction(draft.saving ? "Saving…" : "Save", this.save, t, { primary: true, disabled: draft.saving })))))
@@ -542,7 +550,7 @@ export default class Files extends View {
           .on_click((_e, cx) => { if (!this.document?.draft) { this.show(null); cx.notify(); } }).child("←")))
         .child(div().font_semibold().child("Files"))
         .when(!this.file && !this.operation && !this.on && Boolean(this.root), el => el
-          .child(this.fileAction("Add File", cx => this.beginCreate("", cx), t)))
+          .child(this.fileIcon("Add File", "plus", cx => this.beginCreate("", cx), t)))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
       .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
