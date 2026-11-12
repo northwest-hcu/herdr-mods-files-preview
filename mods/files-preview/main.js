@@ -581,14 +581,15 @@ export default class Files extends View {
         .child(div().font_semibold().child("Files"))
         .when(!this.file && !this.operation && !this.on && Boolean(this.root), el => el
           .child(this.fileIcon("Add File", "plus", cx => this.beginCreate("", cx), t)))
-        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
-      .when(!this.file && !this.operation, el => el.child(v_flex().flex_1().min_h(0)
-        .child(div().flex_none().px(8).py(6).child(Input.new(this.filter).h(30).w_full().px(8)
+        .when(!this.file && !this.operation, el => el.child(Input.new(this.filter).h(28).flex_1().min_w(0).px(8)
           .rounded(6).border_1().border_color(t.border).bg(t.background).text_size(12)))
-        .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim)
+          .when(!this.file && !this.operation, el => el.flex_none().max_w(80))
+          .child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
+      .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
+      .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
         .when(Boolean(this.error) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total"))))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
       .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
