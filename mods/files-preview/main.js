@@ -1,10 +1,11 @@
 // A lazy file browser and editor for the focused pane's folder.
 // Adapted from Herdr's Files mod to add Markdown, CSV, and image previews, wrapping, and editing.
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Button, Editor, EditorState, TextView } from "gpui-base";
+import { v_flex, h_flex, Button, Editor, EditorState, TextView, Input, InputState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window } from "herdr";
 import { isImage, loadImage, releaseImage } from "./images.js";
 import { csvTable } from "./csv.js";
+import { createFile, deleteEntry, fileName } from "./files.js";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -154,6 +155,7 @@ export default class Files extends View {
         document: this.document?.draft ? this.document : null,
       });
       const saved = this.saved.get(next);
+      this.clearOperation();
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
@@ -207,7 +209,7 @@ export default class Files extends View {
     cx.notify();
   }
 
-  show(path, cx, restored = null, source = false) {
+  show(path, cx, restored = null, source = false, editing = false) {
     this.code?.release();
     this.code = null;
     this.releasePreview();
@@ -240,6 +242,7 @@ export default class Files extends View {
         if (text === null) { this.fileError = "This file is no longer available"; return; }
         if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
         this.openDocument({ text, ext, isMarkdown: ext === "md" || ext === "markdown", draft: null });
+        if (editing) this.edit(cx);
       } catch (error) {
         if (isCurrent()) this.fileError = isImage(path.split(".").pop().toLowerCase()) && !source
           ? error.message : "Cannot preview this file (binary, too large, or unreadable)";
@@ -250,7 +253,87 @@ export default class Files extends View {
 
   async close() {
     this.fileRequest = {};
+    this.clearOperation();
     await releaseImage(this.imagePreview);
+  }
+
+  clearOperation() {
+    this.operation?.input?.release();
+    this.operation = null;
+  }
+
+  beginCreate(parent, cx) {
+    if (this.on || !this.root || this.operation?.busy) return;
+    this.clearOperation();
+    const input = InputState.new({ value: "" });
+    this.operation = { kind: "create", parent, input, context: this.context };
+    input.on("submit", (_event, cx) => this.performOperation(cx));
+    input.focus();
+    cx.notify();
+  }
+
+  beginDelete(path, directory, cx) {
+    if (this.on || !this.root || this.operation?.busy) return;
+    this.clearOperation();
+    this.operation = { kind: "delete", path, directory, context: this.context };
+    cx.notify();
+  }
+
+  performOperation(cx) {
+    const operation = this.operation;
+    if (this.on || !operation || operation.busy || !this.current(operation.context)) return;
+    const root = this.root;
+    let name;
+    try {
+      if (operation.kind === "create") name = fileName(operation.input.value());
+    } catch (error) {
+      operation.error = error.message;
+      cx.notify();
+      return;
+    }
+    operation.busy = true;
+    operation.error = null;
+    cx.spawn(async cx => {
+      try {
+        let path = operation.path;
+        if (operation.kind === "create") path = await createFile(root, operation.parent, name);
+        else await deleteEntry(root, path, operation.directory);
+        if (this.operation !== operation || !this.current(operation.context)) return;
+        if (operation.kind === "delete") {
+          for (const folder of [...this.folders]) if (folder === path || folder.startsWith(path + "/")) {
+            this.folders.delete(folder);
+            this.entries.delete(folder);
+          }
+        } else if (operation.parent) this.folders.add(operation.parent);
+        this.clearOperation();
+        this.refresh(cx);
+        if (operation.kind === "create") this.show(path, cx, null, true, true);
+      } catch (error) {
+        if (this.operation === operation) operation.error = error.message;
+      } finally {
+        operation.busy = false;
+        cx.notify();
+      }
+    });
+    cx.notify();
+  }
+
+  renderOperation(t) {
+    const operation = this.operation, creating = operation.kind === "create";
+    return v_flex().flex_1().min_h(0).p(14).gap(12)
+      .child(div().font_semibold().child(creating ? "Add File" : operation.directory ? "Delete Folder" : "Delete File"))
+      .child(div().text_color(t.muted).child(creating ? "Folder: " + (operation.parent || ".") : operation.path))
+      .when(creating, el => el
+        .child(div().text_size(12).text_color(t.muted).child("File name"))
+        .child(Input.new(operation.input).h(34).px(8).rounded(6).border_1().border_color(t.border)))
+      .when(!creating, el => el.child(div().text_color(t.blocked)
+        .child(operation.directory ? "Permanently delete this folder and all its contents? This cannot be undone."
+          : "Permanently delete this file? This cannot be undone.")))
+      .when(Boolean(operation.error), el => el.child(div().text_color(t.blocked).child(operation.error)))
+      .child(h_flex().gap(8)
+        .child(this.fileAction("Cancel", cx => { this.clearOperation(); cx.notify(); }, t, { disabled: operation.busy }))
+        .child(this.fileAction(operation.busy ? "Working…" : creating ? "Create" : "Delete", this.performOperation, t,
+          { primary: true, disabled: operation.busy })));
   }
 
   imageMode(source, cx) {
@@ -355,12 +438,16 @@ export default class Files extends View {
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
-      out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
+      out.push(h_flex().id(`file-${path}`).h(30).flex_none().pr(4).gap(4).items_center()
+        .child(h_flex().flex_1().min_w(0).h_full().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
         .child(entry.dir ? svg(`mods/files-preview/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(svg(`mods/files-preview/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().child(entry.name))
-        .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))));
+        .when(Boolean(mark), el => el.child(div().text_size(11).text_color(mark === "A" ? t.ansi2 : mark === "D" || mark === "U" ? t.ansi1 : t.blocked).child(mark))))
+        .when(!this.on, el => el
+          .when(entry.dir, row => row.child(this.fileAction("Add File", cx => this.beginCreate(path, cx), t, { id: `add-${path}` })))
+          .child(this.fileAction("Delete", cx => this.beginDelete(path, entry.dir, cx), t, { id: `delete-${path}` }))));
       if (entry.dir && open) this.rows(path, depth + 1, out, t);
     }
     return out;
@@ -381,8 +468,8 @@ export default class Files extends View {
       .child(label);
   }
 
-  fileAction(label, handler, t, { primary = false, disabled = false } = {}) {
-    return Button.new(`files-${label}`).disabled(disabled).px(9).py(4).rounded(6)
+  fileAction(label, handler, t, { primary = false, disabled = false, id = label } = {}) {
+    return Button.new(`files-${id}`).disabled(disabled).px(9).py(4).rounded(6)
       .text_size(12).font_semibold().text_color(disabled ? t.dim : primary ? t.accent_foreground : t.foreground)
       .bg(primary && !disabled ? t.accent : t.raised)
       .when(!disabled, el => el.cursor_pointer().hover(s => s.bg(primary ? t.accent : t.hover)))
@@ -454,10 +541,13 @@ export default class Files extends View {
           .accessibility_label("Back to files").text_color(this.document?.draft ? t.dim : t.muted)
           .on_click((_e, cx) => { if (!this.document?.draft) { this.show(null); cx.notify(); } }).child("←")))
         .child(div().font_semibold().child("Files"))
+        .when(!this.file && !this.operation && !this.on && Boolean(this.root), el => el
+          .child(this.fileAction("Add File", cx => this.beginCreate("", cx), t)))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
+      .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
+      .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
-      .when(Boolean(this.file), el => el.child(this.renderFile(t)));
+      .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
