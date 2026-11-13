@@ -97,13 +97,13 @@ async function directory(path, on) {
     // Links keep directory attributes even when dangling; check their target.
     // Other reparse points (OneDrive's folders) have no LinkType and are folders.
     // PowerShell reads curly single quotes as quotes too, so they're doubled like '.
-    const r = await exec("powershell", ["-NoProfile", "-Command", "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & { param($p) @(Get-ChildItem -LiteralPath $p -Force -ErrorAction Stop | Where-Object Name -ne '.git' | Select-Object -First 501 | ForEach-Object { @{ name=$_.Name; dir=($_.PSIsContainer -and (-not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $_.LinkType -or ($_.Target -and [IO.Directory]::Exists(([IO.Path]::Combine([IO.Path]::GetDirectoryName($_.FullName), $_.Target[0])))))) } }) | ConvertTo-Json -Compress } '" + path.replace(/['‘’‚‛]/g, "$&$&") + "'"], { on });
+    const r = await exec("powershell", ["-NoProfile", "-Command", "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); & { param($p) @(Get-ChildItem -LiteralPath $p -Force -ErrorAction Stop | Where-Object Name -ne '.git' | Select-Object -First 501 | ForEach-Object { @{ name=$_.Name; link=[bool]$_.LinkType; dir=($_.PSIsContainer -and (-not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $_.LinkType -or ($_.Target -and [IO.Directory]::Exists(([IO.Path]::Combine([IO.Path]::GetDirectoryName($_.FullName), $_.Target[0])))))) } }) | ConvertTo-Json -Compress } '" + path.replace(/['‘’‚‛]/g, "$&$&") + "'"], { on });
     if (r.code !== 0) throw new Error(r.stderr || "Cannot list this folder");
     const result = JSON.parse(r.stdout || "[]");
     return Array.isArray(result) ? result : [result];
   };
   if (!on && window()?.platform === "windows") return windowsDirectory();
-  const script = 'n=0; for p in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$p" ] || [ -L "$p" ] || continue; name=${p##*/}; [ "$name" = .git ] && continue; if [ -d "$p" ]; then kind=d; else kind=f; fi; printf "%s\\0%s\\0" "$kind" "$name"; n=$((n+1)); [ "$n" -gt 500 ] && break; done; test -d "$1"';
+  const script = 'n=0; for p in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$p" ] || [ -L "$p" ] || continue; name=${p##*/}; [ "$name" = .git ] && continue; if [ -d "$p" ]; then if [ -L "$p" ]; then kind=l; else kind=d; fi; else kind=f; fi; printf "%s\\0%s\\0" "$kind" "$name"; n=$((n+1)); [ "$n" -gt 500 ] && break; done; test -d "$1"';
   let r;
   try { r = await exec("sh", ["-c", script, "files", path], { on }); }
   catch (e) {
@@ -112,18 +112,21 @@ async function directory(path, on) {
   }
   if (r.code !== 0) throw new Error(r.stderr || "Cannot list this folder");
   const fields = r.stdout.split("\0"), out = [];
-  for (let i = 0; i + 1 < fields.length; i += 2) out.push({ name: fields[i + 1], dir: fields[i] === "d" });
+  for (let i = 0; i + 1 < fields.length; i += 2) out.push({ name: fields[i + 1], dir: fields[i] === "d" || fields[i] === "l", link: fields[i] === "l" });
   return out;
 }
 
 export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
-    this.filter = InputState.new({ value: "", placeholder: "Filter by name or extension (.csv)" });
-    this.filter.on("change", (_event, cx) => cx.notify());
+    this.filter = InputState.new({ value: "", placeholder: "Search by name or extension" });
+    this.filter.on("change", (_event, cx) => this.search(cx));
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
-    cx.timer.every(10000, cx => this.refresh(cx));
+    cx.timer.every(10000, cx => {
+      this.refresh(cx);
+      if (this.on && this.searchResults && !this.searchResults.loading) this.search(cx, true);
+    });
   }
 
   watch(root, cx) {
@@ -131,7 +134,7 @@ export default class Files extends View {
     this.watched = root;
     const context = this.context;
     cx.spawn(async cx => {
-      try { while (this.context === context) { await watchFolder(root); if (this.current(context)) this.refresh(cx); } }
+      try { while (this.context === context) { await watchFolder(root); if (this.current(context)) { this.refresh(cx); this.search(cx, true); } } }
       catch { if (this.context === context) this.watched = null; }
     });
   }
@@ -158,6 +161,7 @@ export default class Files extends View {
       });
       const saved = this.saved.get(next);
       this.clearOperation();
+      this.searchResults = null;
       this.filter.set_value("");
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
@@ -192,6 +196,13 @@ export default class Files extends View {
   }
 
   toggle(path, cx) {
+    if (this.searchResults) {
+      const { entries, collapsed } = this.searchResults;
+      if (entries.has(path) && !collapsed.has(path)) collapsed.add(path);
+      else collapsed.delete(path);
+      cx.notify();
+      return;
+    }
     if (this.folders.has(path)) {
       for (const folder of [...this.folders]) if (folder === path || folder.startsWith(path + "/")) {
         this.folders.delete(folder);
@@ -256,6 +267,7 @@ export default class Files extends View {
 
   async close() {
     this.fileRequest = {};
+    this.searchResults = null;
     this.clearOperation();
     this.filter?.release();
     await releaseImage(this.imagePreview);
@@ -311,6 +323,7 @@ export default class Files extends View {
         } else if (operation.parent) this.folders.add(operation.parent);
         this.clearOperation();
         this.refresh(cx);
+        this.search(cx, true);
         if (operation.kind === "create") this.show(path, cx, null, true, true);
       } catch (error) {
         if (this.operation === operation) operation.error = error.message;
@@ -437,17 +450,69 @@ export default class Files extends View {
     cx.notify();
   }
 
+  search(cx, refresh = false) {
+    if (!this.filter.value().trim() || !this.root) {
+      this.searchResults = null;
+      cx.notify();
+      return;
+    }
+    if (this.searchResults && !refresh) {
+      this.searchResults.collapsed.clear();
+      cx.notify();
+      return;
+    }
+    const context = this.context;
+    const search = this.searchResults = { entries: new Map(), collapsed: new Set(), loading: true, limited: false, error: false };
+    const isCurrent = () => this.searchResults === search && this.current(context);
+    cx.timer.after(200, cx => {
+      if (!isCurrent()) return;
+      cx.spawn(async cx => {
+        const queue = [{ path: "", depth: 0 }];
+        let total = 0;
+        try {
+          while (queue.length && isCurrent()) {
+            const batch = queue.splice(0, 4);
+            const results = await Promise.allSettled(batch.map(item => directory(item.path ? `${context.cwd}/${item.path}` : context.cwd, context.on)));
+            if (!isCurrent()) return;
+            for (let i = 0; i < results.length; i++) {
+              const result = results[i], item = batch[i];
+              if (result.status === "rejected") { search.error = true; continue; }
+              const entries = result.value.slice(0, Math.min(PER_FOLDER, TOTAL - total))
+                .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+              search.entries.set(item.path, entries);
+              total += entries.length;
+              if (entries.length < result.value.length) search.limited = true;
+              for (const entry of entries) if (entry.dir && !entry.link) {
+                if (item.depth >= 40) search.limited = true;
+                else queue.push({ path: item.path ? `${item.path}/${entry.name}` : entry.name, depth: item.depth + 1 });
+              }
+              if (total >= TOTAL) {
+                if (queue.length || i + 1 < results.length) search.limited = true;
+                queue.length = 0;
+                break;
+              }
+            }
+            cx.notify();
+          }
+        } catch { search.error = true; }
+        finally { if (isCurrent()) { search.loading = false; cx.notify(); } }
+      });
+    });
+    cx.notify();
+  }
+
   filteredPaths() {
     const query = this.filter.value().trim().toLowerCase();
     if (!query) return null;
     const extension = query.startsWith("*.") ? query.slice(1) : query.startsWith(".") ? query : null;
+    const entries = this.searchResults?.entries ?? this.entries;
     const matches = new Set();
     const visit = (prefix, depth) => {
       if (depth > 40) return false;
       let found = false;
-      for (const entry of this.entries.get(prefix) ?? []) {
+      for (const entry of entries.get(prefix) ?? []) {
         const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-        const childMatches = entry.dir && this.folders.has(path) && visit(path, depth + 1);
+        const childMatches = entry.dir && (this.searchResults ? entries.has(path) : this.folders.has(path)) && visit(path, depth + 1);
         const name = entry.name.toLowerCase();
         if (childMatches || (extension ? !entry.dir && name.endsWith(extension) : name.includes(query))) {
           matches.add(path);
@@ -462,9 +527,11 @@ export default class Files extends View {
 
   rows(prefix, depth, out, t, matches = null) {
     if (out.length >= TOTAL || depth > 40) return out;
-    for (const entry of this.entries.get(prefix) ?? []) {
+    const search = this.searchResults, entries = search?.entries ?? this.entries;
+    for (const entry of entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const open = search ? entries.has(path) && !search.collapsed.has(path) : this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
       if (matches && !matches.has(path)) continue;
       out.push(h_flex().id(`file-${path}`).h(30).flex_none().pr(4).gap(4).items_center()
         .child(h_flex().flex_1().min_w(0).h_full().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover))
@@ -571,6 +638,8 @@ export default class Files extends View {
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
+    const search = this.searchResults;
+    const status = search ? search.loading ? "Searching…" : search.error ? "Some folders could not be searched." : null : this.error;
     const matches = this.filteredPaths();
     const rows = !this.file && !this.operation ? this.rows("", 0, [], t, matches) : [];
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
@@ -588,8 +657,9 @@ export default class Files extends View {
           .child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
       .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
-        .when(Boolean(this.error) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
+        .when(Boolean(status) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(status || (!search && this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
+        .when(search ? search.limited : this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim)
+          .child(search ? "Search limited to 500 entries per folder, 5,000 total, and 40 levels" : "File list limited to 500 entries per folder and 5,000 total")))))
       .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
