@@ -22,7 +22,65 @@ const LANG = {
   markdown: "md",
 };
 const PER_FOLDER = 500, TOTAL = 5000;
+const SEARCH_DEPTH = 3;
 const PREVIEW_LIMIT = 400000;
+
+function pathMatcher(value) {
+  let query = value.trim().replace(/\\/g, "/").toLowerCase();
+  while (query.startsWith("./")) query = query.slice(2);
+  if (/^(?:\/|[a-z]:|~\/)/.test(query) || query.split("/").includes("..") || /[\0\r\n]/.test(query)) {
+    throw new Error("Use a relative path inside the current folder.");
+  }
+  query = query.replace(/\/+/g, "/");
+  if (!/[*?\[]/.test(query)) return path => path.toLowerCase().includes(query);
+  const basename = !query.includes("/"), chars = Array.from(query), tokens = [];
+  for (let i = 0; i < chars.length; i++) {
+    const char = chars[i];
+    if (char === "*") {
+      const start = i;
+      while (chars[i + 1] === "*") i++;
+      const across = i > start && (start === 0 || chars[start - 1] === "/") && (i + 1 === chars.length || chars[i + 1] === "/");
+      if (across && chars[i + 1] === "/") { tokens.push({ kind: "directories" }); i++; }
+      else tokens.push({ kind: across ? "all" : "star" });
+    } else if (char === "?") tokens.push({ kind: "one" });
+    else if (char === "[") {
+      let end = i + 1;
+      const negate = chars[end] === "!" || chars[end] === "^";
+      if (negate) end++;
+      if (chars[end] === "]") end++;
+      end = chars.indexOf("]", end);
+      if (end < 0) throw new Error("Invalid glob pattern.");
+      const members = chars.slice(i + 1 + Number(negate), end).join("").replace(/[\[\]^]/g, "\\$&");
+      try { tokens.push({ kind: "class", pattern: new RegExp("^[" + (negate ? "^" : "") + members + "]$", "u") }); }
+      catch { throw new Error("Invalid glob pattern."); }
+      i = end;
+    } else tokens.push({ kind: "literal", value: char });
+  }
+  return path => {
+    const text = Array.from((basename ? path.slice(path.lastIndexOf("/") + 1) : path).toLowerCase());
+    let positions = new Uint8Array(text.length + 1);
+    positions[0] = 1;
+    // Track matching prefixes to avoid backtracking across repeated wildcards.
+    for (const token of tokens) {
+      const next = new Uint8Array(text.length + 1);
+      let reachable = false;
+      for (let i = 0; i <= text.length; i++) {
+        if (token.kind === "star" || token.kind === "all") {
+          next[i] = positions[i] || (i > 0 && next[i - 1] && (token.kind === "all" || text[i - 1] !== "/")) ? 1 : 0;
+        } else if (token.kind === "directories") {
+          reachable ||= Boolean(positions[i]);
+          next[i] = positions[i] || (i > 0 && reachable && text[i - 1] === "/") ? 1 : 0;
+        } else if (i > 0 && positions[i - 1]) {
+          const char = text[i - 1];
+          next[i] = token.kind === "literal" ? Number(char === token.value)
+            : Number(char !== "/" && (token.kind === "one" || token.pattern.test(char)));
+        }
+      }
+      positions = next;
+    }
+    return Boolean(positions[text.length]);
+  };
+}
 
 function previewText(text) {
   return text.length > PREVIEW_LIMIT ? text.slice(0, PREVIEW_LIMIT) + "\n\n… (file truncated)" : text;
@@ -119,7 +177,7 @@ async function directory(path, on) {
 export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
-    this.filter = InputState.new({ value: "", placeholder: "Search by name or extension" });
+    this.filter = InputState.new({ value: "", placeholder: "Search by path or glob" });
     this.filter.on("change", (_event, cx) => this.search(cx));
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.refresh(cx);
@@ -456,13 +514,19 @@ export default class Files extends View {
       cx.notify();
       return;
     }
-    if (this.searchResults && !refresh) {
+    try { pathMatcher(this.filter.value()); }
+    catch (error) {
+      this.searchResults = { entries: new Map(), collapsed: new Set(), loading: false, limited: false, error: error.message, invalid: true };
+      cx.notify();
+      return;
+    }
+    if (this.searchResults && !this.searchResults.invalid && !refresh) {
       this.searchResults.collapsed.clear();
       cx.notify();
       return;
     }
     const context = this.context;
-    const search = this.searchResults = { entries: new Map(), collapsed: new Set(), loading: true, limited: false, error: false };
+    const search = this.searchResults = { entries: new Map(), collapsed: new Set(), loading: true, limited: false, error: null };
     const isCurrent = () => this.searchResults === search && this.current(context);
     cx.timer.after(200, cx => {
       if (!isCurrent()) return;
@@ -471,19 +535,21 @@ export default class Files extends View {
         let total = 0;
         try {
           while (queue.length && isCurrent()) {
-            const batch = queue.splice(0, 4);
+            let count = 1;
+            while (count < 4 && queue[count]?.depth === queue[0].depth) count++;
+            const batch = queue.splice(0, count);
             const results = await Promise.allSettled(batch.map(item => directory(item.path ? `${context.cwd}/${item.path}` : context.cwd, context.on)));
             if (!isCurrent()) return;
             for (let i = 0; i < results.length; i++) {
               const result = results[i], item = batch[i];
-              if (result.status === "rejected") { search.error = true; continue; }
+              if (result.status === "rejected") { search.error = "Some folders could not be searched."; continue; }
               const entries = result.value.slice(0, Math.min(PER_FOLDER, TOTAL - total))
                 .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
               search.entries.set(item.path, entries);
               total += entries.length;
               if (entries.length < result.value.length) search.limited = true;
               for (const entry of entries) if (entry.dir && !entry.link) {
-                if (item.depth >= 40) search.limited = true;
+                if (item.depth >= SEARCH_DEPTH) search.limited = true;
                 else queue.push({ path: item.path ? `${item.path}/${entry.name}` : entry.name, depth: item.depth + 1 });
               }
               if (total >= TOTAL) {
@@ -494,7 +560,7 @@ export default class Files extends View {
             }
             cx.notify();
           }
-        } catch { search.error = true; }
+        } catch { search.error = "Some folders could not be searched."; }
         finally { if (isCurrent()) { search.loading = false; cx.notify(); } }
       });
     });
@@ -502,26 +568,23 @@ export default class Files extends View {
   }
 
   filteredPaths() {
-    const query = this.filter.value().trim().toLowerCase();
+    const query = this.filter.value().trim();
     if (!query) return null;
-    const extension = query.startsWith("*.") ? query.slice(1) : query.startsWith(".") ? query : null;
+    let match;
+    try { match = pathMatcher(query); }
+    catch { return new Set(); }
     const entries = this.searchResults?.entries ?? this.entries;
     const matches = new Set();
-    const visit = (prefix, depth) => {
-      if (depth > 40) return false;
-      let found = false;
-      for (const entry of entries.get(prefix) ?? []) {
-        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-        const childMatches = entry.dir && (this.searchResults ? entries.has(path) : this.folders.has(path)) && visit(path, depth + 1);
-        const name = entry.name.toLowerCase();
-        if (childMatches || (extension ? !entry.dir && name.endsWith(extension) : name.includes(query))) {
-          matches.add(path);
-          found = true;
-        }
+    for (const [prefix, children] of entries) for (const entry of children) {
+      if (entry.dir) continue;
+      let path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (!match(path)) continue;
+      while (path) {
+        matches.add(path);
+        const slash = path.lastIndexOf("/");
+        path = slash < 0 ? "" : path.slice(0, slash);
       }
-      return found;
-    };
-    visit("", 0);
+    }
     return matches;
   }
 
@@ -639,7 +702,7 @@ export default class Files extends View {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
     const search = this.searchResults;
-    const status = search ? search.loading ? "Searching…" : search.error ? "Some folders could not be searched." : null : this.error;
+    const status = search ? search.loading ? "Searching…" : search.error : this.error;
     const matches = this.filteredPaths();
     const rows = !this.file && !this.operation ? this.rows("", 0, [], t, matches) : [];
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
@@ -659,7 +722,7 @@ export default class Files extends View {
       .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
         .when(Boolean(status) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(status || (!search && this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
         .when(search ? search.limited : this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim)
-          .child(search ? "Search limited to 500 entries per folder, 5,000 total, and 40 levels" : "File list limited to 500 entries per folder and 5,000 total")))))
+          .child(search ? "Search limited to 3 child-folder levels, 500 entries per folder, and 5,000 total" : "File list limited to 500 entries per folder and 5,000 total")))))
       .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
