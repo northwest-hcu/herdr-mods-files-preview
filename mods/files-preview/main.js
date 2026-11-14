@@ -702,7 +702,12 @@ export default class Files extends View {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
     const search = this.searchResults;
-    const status = search ? search.loading ? "Searching…" : search.error : this.error;
+    const partial = search ? !search.invalid && (search.limited || Boolean(search.error)) : this.limited || Boolean(this.error);
+    const reasons = [];
+    if (search?.limited) reasons.push("Search limits: 3 child-folder levels, 500 entries per folder, 5,000 total.");
+    else if (!search && this.limited) reasons.push("List limits: 500 entries per folder, 5,000 total.");
+    if (search ? !search.invalid && search.error : this.error) reasons.push("Some folders could not be read.");
+    const status = search ? search.loading ? "Searching…" : search.invalid ? search.error : null : this.error;
     const matches = this.filteredPaths();
     const rows = !this.file && !this.operation ? this.rows("", 0, [], t, matches) : [];
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
@@ -719,10 +724,14 @@ export default class Files extends View {
           .when(!this.file && !this.operation, el => el.flex_none().max_w(80))
           .child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(Boolean(this.operation), el => el.child(this.renderOperation(t)))
-      .when(!this.file && !this.operation, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
-        .when(Boolean(status) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(status || (!search && this.loading ? "Loading files…" : this.root ? matches ? "No matching files or folders" : "No files" : "No folder"))))
-        .when(search ? search.limited : this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim)
-          .child(search ? "Search limited to 3 child-folder levels, 500 entries per folder, and 5,000 total" : "File list limited to 500 entries per folder and 5,000 total")))))
+      .when(!this.file && !this.operation, el => el.child(v_flex().flex_1().min_h(0)
+        .when(partial, el => el.child(v_flex().id("files-partial-results").flex_none().px(10).py(7).gap(3)
+          .bg(t.raised).border_b(1).border_color(t.border)
+          .child(div().text_size(12).font_semibold().text_color(t.blocked).child("Not all files were retrieved. Showing partial results."))
+          .child(div().text_size(11).text_color(t.muted).child(reasons.join(" ")))))
+        .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
+          .when(Boolean(status) || !rows.length, el => el.child(div().p(8).text_size(12).text_color(t.dim)
+            .child(status || (!search && this.loading ? "Loading files…" : this.root ? partial ? "No matching files in partial results." : matches ? "No matching files or folders" : "No files" : "No folder")))))))
       .when(Boolean(this.file) && !this.operation, el => el.child(this.renderFile(t)));
   }
 }
