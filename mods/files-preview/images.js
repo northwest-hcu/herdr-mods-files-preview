@@ -112,6 +112,19 @@ export async function loadImage(path, extension, on) {
   }
 }
 
+export async function cacheSvg(svg) {
+  const asset = CACHE_DIRECTORY + "/" + randomUUID() + ".svg";
+  const absolute = appHome() + "/" + asset;
+  try {
+    await fs.mkdir(appHome() + "/" + CACHE_DIRECTORY, { recursive: true });
+    await fs.writeFile(absolute, svg);
+    return { asset, absolute, extension: "svg" };
+  } catch {
+    await fs.unlink(absolute).catch(() => {});
+    throw new Error("Could not prepare the diagram for display.");
+  }
+}
+
 export async function releaseImage(preview) {
   if (preview) await fs.unlink(preview.absolute).catch(() => {});
 }

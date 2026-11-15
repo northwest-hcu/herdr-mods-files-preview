@@ -3,8 +3,9 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Button, Editor, EditorState, TextView, Input, InputState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, writeTextFile, watchFolder, theme, settings, window } from "herdr";
-import { isImage, loadImage, releaseImage } from "./images.js";
+import { isImage, loadImage, releaseImage, cacheSvg } from "./images.js";
 import { csvTable } from "./csv.js";
+import { mermaidSections } from "./mermaid.js";
 import { createFile, deleteEntry, fileName } from "./files.js";
 
 function location() {
@@ -298,7 +299,7 @@ export default class Files extends View {
     cx.spawn(async cx => {
       try {
         if (restored) {
-          if (isCurrent()) this.openDocument(restored);
+          if (isCurrent()) this.openDocument(restored, cx);
           return;
         }
         const filename = path.split("/").pop();
@@ -313,7 +314,7 @@ export default class Files extends View {
         if (!isCurrent()) return;
         if (text === null) { this.fileError = "This file is no longer available"; return; }
         if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
-        this.openDocument({ text, ext, isMarkdown: ext === "md" || ext === "markdown", draft: null });
+        this.openDocument({ text, ext, isMarkdown: ext === "md" || ext === "markdown", draft: null }, cx);
         if (editing) this.edit(cx);
       } catch (error) {
         if (isCurrent()) this.fileError = isImage(path.split(".").pop().toLowerCase()) && !source
@@ -328,6 +329,7 @@ export default class Files extends View {
     this.searchResults = null;
     this.clearOperation();
     this.filter?.release();
+    await this.releasePreview();
     await releaseImage(this.imagePreview);
   }
 
@@ -417,10 +419,10 @@ export default class Files extends View {
     cx.notify();
   }
 
-  openDocument(document) {
+  openDocument(document, cx) {
     this.document = document;
     this.updateEditor();
-    if (!this.showSource) this.updatePreview();
+    if (!this.showSource) this.updatePreview(cx);
   }
 
   updateEditor() {
@@ -433,11 +435,16 @@ export default class Files extends View {
   }
 
   releasePreview() {
-    for (const section of this.preview?.sections ?? []) section.editor?.release();
+    const releases = [];
+    for (const section of this.preview?.sections ?? []) {
+      section.editor?.release();
+      if (section.image) releases.push(releaseImage(section.image));
+    }
     this.preview = null;
+    return Promise.all(releases);
   }
 
-  updatePreview() {
+  updatePreview(cx) {
     const isCsv = this.document.ext === "csv";
     if (!this.document.isMarkdown && !isCsv) return;
     const source = this.document.draft?.text ?? this.document.text;
@@ -452,10 +459,26 @@ export default class Files extends View {
       }
       return;
     }
-    const sections = markdownSections(text).filter(section => section.language || section.markdown.trim());
-    this.preview = { text, sections: sections.map(section => section.language
+    const diagrams = mermaidSections(text);
+    const sections = (diagrams ? diagrams.flatMap(part => {
+      if (part.diagram) return [part];
+      const prose = markdownSections(part.markdown);
+      return prose.length ? prose : [part];
+    }) : markdownSections(text)).filter(section => section.diagram || section.language || section.markdown.trim());
+    const preview = this.preview = { text, sections: sections.map(section => section.language
       ? { ...section, editor: codeEditor(section.code, section.language, true, true) }
       : section) };
+    if (cx && sections.some(section => section.diagram)) cx.spawn(async cx => {
+      for (const section of preview.sections) if (section.diagram) {
+        if (this.preview !== preview) return;
+        try {
+          const cached = await cacheSvg(section.svg);
+          if (this.preview !== preview) { await releaseImage(cached); return; }
+          section.image = cached;
+        } catch { section.error = "Could not prepare the diagram for display."; }
+        cx.notify();
+      }
+    });
   }
 
   edit(cx) {
@@ -501,7 +524,7 @@ export default class Files extends View {
           : "Could not save the file. Your draft is still here.";
       } finally {
         draft.saving = false;
-        if (this.document === document && !this.showSource) this.updatePreview();
+        if (this.document === document && !this.showSource) this.updatePreview(cx);
         cx.notify();
       }
     });
@@ -620,7 +643,7 @@ export default class Files extends View {
       .on_click((_e, cx) => {
         if (this.document.draft && this.showSource) this.document.draft.text = this.code.value();
         this.showSource = source;
-        if (!source) this.updatePreview();
+        if (!source) this.updatePreview(cx);
         cx.notify();
       })
       .child(label);
@@ -657,7 +680,15 @@ export default class Files extends View {
       .flex_1().min_h(0).min_w(0).p(16);
 
     return v_flex().id(id).flex_1().min_h(0).min_w(0).overflow_y_scrollbar().p(16).gap(12)
-      .children(sections.map((section, i) => section.editor
+      .children(sections.map((section, i) => section.diagram
+        ? section.image
+          ? v_flex().id(`${id}-diagram-${i}`).flex_none().w_full().min_w(0).h(section.height).overflow_x_scrollbar()
+            .child(image(section.image.asset).w(section.width).h(section.height).flex_none())
+          : section.error
+            ? TextView.markdown(`${id}-diagram-error-${i}`, "**Mermaid preview unavailable:** " + section.error + "\n\n" + section.source)
+              .selectable(true).scrollable(false).flex_none().w_full()
+            : div().h(section.height).flex_none().p(12).text_color(t.dim).child("Rendering Mermaid diagram…")
+        : section.editor
         ? v_flex().flex_none().min_w(0).rounded(7).border_1().border_color(t.border).overflow_hidden()
           .child(div().flex_none().px(10).py(5).bg(t.raised).text_size(11).text_color(t.muted).child(section.language))
           .child(Editor.new(section.editor).flex_none().h(Math.min(14, section.lines) * 19 + 10))

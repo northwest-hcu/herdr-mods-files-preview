@@ -12,7 +12,7 @@ Herdr デスクトップアプリの右側にある **Files** パネルを拡張
 
 #### 設定フォルダーを指定する
 
-インストール時とアンインストール時に、以下を実行します。
+インストール・更新・アンインストールの前に、以下を実行します。
 
 ```powershell
 $herdrAppHome = if ($env:HERDR_APP_HOME) {
@@ -42,6 +42,24 @@ herdr-app do layout.switch --name files-preview
 
 Herdr のタブバーで **Files** を開きます。
 
+#### 更新
+
+編集中のファイルを保存し、Git で取得したこのリポジトリのルートで実行します。
+
+```powershell
+if (-not (Test-Path -LiteralPath $modPath -PathType Container)) {
+    throw '先にインストールしてください。'
+}
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) {
+    throw 'リポジトリを更新できませんでした。'
+}
+Get-ChildItem -LiteralPath 'mods/files-preview' -Force |
+    Where-Object Name -ne 'main.js' |
+    Copy-Item -Destination $modPath -Recurse -Force -ErrorAction Stop
+Copy-Item -LiteralPath 'mods/files-preview/main.js' -Destination (Join-Path $modPath 'main.js') -Force -ErrorAction Stop
+```
+
 #### アンインストール
 
 編集中のファイルがあれば保存し、標準レイアウトに切り替えてから、インストールした Mod とレイアウトを削除します。
@@ -70,7 +88,7 @@ if (Test-Path -LiteralPath $imageCachePath) {
 
 #### 設定フォルダーを指定する
 
-インストール時とアンインストール時に、以下を実行します。設定フォルダーは `HERDR_APP_HOME`、`XDG_CONFIG_HOME/herdr-app`、`$HOME/.config/herdr-app` の順で選択します。 [Herdr の設定フォルダー](https://github.com/herdrdev/herdr-app/blob/master/docs/security.md#what-stays-on-disk)
+インストール・更新・アンインストールの前に、以下を実行します。設定フォルダーは `HERDR_APP_HOME`、`XDG_CONFIG_HOME/herdr-app`、`$HOME/.config/herdr-app` の順で選択します。 [Herdr の設定フォルダー](https://github.com/herdrdev/herdr-app/blob/master/docs/security.md#what-stays-on-disk)
 
 ```sh
 herdr_app_home="${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}"
@@ -98,6 +116,26 @@ Mod と同梱のレイアウトをコピーし、`files-preview` に切り替え
 ```
 
 Herdr のタブバーで **Files** を開きます。
+
+#### 更新
+
+編集中のファイルを保存し、Git で取得したこのリポジトリのルートで実行します。
+
+```sh
+(
+    set -e
+    if [ ! -d "$mod_path" ]; then
+        printf '%s\n' '先にインストールしてください。' >&2
+        exit 1
+    fi
+    git pull --ff-only
+    for entry in mods/files-preview/*; do
+        [ "${entry##*/}" = main.js ] && continue
+        cp -R "$entry" "$mod_path/"
+    done
+    cp mods/files-preview/main.js "$mod_path/main.js"
+)
+```
 
 #### アンインストール
 
@@ -131,6 +169,8 @@ Herdr のタブバーで **Files** を開きます。
         ├── csv.js              # CSV の解析とテーブル表示用データの生成
         ├── files.js            # ローカルのファイル作成・ファイルとフォルダーの削除
         ├── images.js           # 画像の読み込み、一時コピー、削除
+        ├── mermaid.js          # Mermaid の変換と SVG 表示用の調整
+        ├── vendor/             # 同梱ライブラリと第三者ライセンス
         ├── mod.json            # Herdr の Mod マニフェスト
         ├── chevron-down.svg
         ├── chevron-right.svg
@@ -145,3 +185,5 @@ Herdr のタブバーで **Files** を開きます。
 ## ライセンス
 
 この Mod とレイアウトは、[Herdr の標準 Files Mod と main レイアウト](https://github.com/herdrdev/herdr-app/tree/v0.1.15/defaults)を改変したものです。[Apache License 2.0](LICENSE) に従います。アイコンのライセンスは [LICENSE-Lucide.txt](mods/files-preview/LICENSE-Lucide.txt) を参照してください。
+
+同梱ライブラリの出典・バージョンとライセンスは [vendor/THIRD-PARTY.txt](mods/files-preview/vendor/THIRD-PARTY.txt) を参照してください。

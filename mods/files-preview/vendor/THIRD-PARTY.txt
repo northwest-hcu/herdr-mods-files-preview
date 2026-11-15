@@ -1,0 +1,38 @@
+beautiful-mermaid.js is a generated ECMAScript module containing:
+
+beautiful-mermaid 1.1.3 — MIT
+  Mermaid parsing and SVG generation.
+  License: LICENSE-beautiful-mermaid.txt
+  Source: https://github.com/lukilabs/beautiful-mermaid
+  Source package: https://registry.npmjs.org/beautiful-mermaid/-/beautiful-mermaid-1.1.3.tgz
+
+elkjs 0.11.1 — Eclipse Public License 2.0
+  Diagram layout.
+  License: LICENSE-elkjs.txt
+  Source: https://github.com/kieler/elkjs
+  Upstream ELK source: https://github.com/eclipse-elk/elk
+  Source package: https://registry.npmjs.org/elkjs/-/elkjs-0.11.1.tgz
+  Source code for this component is available under EPL-2.0 from these
+  upstream repositories and their source releases.
+  This bundle applies the source transformation in elkjs-herdr.js (EPL-2.0).
+  It defines the Java Object prototype's own toString method explicitly,
+  allowing it to inherit from Herdr's frozen JavaScript Object prototype.
+  Deferred worker startup replies use Promise microtasks instead of a
+  global timer, which is unavailable in Herdr's JavaScript host.
+
+entities 7.0.1 — BSD-2-Clause
+  HTML entity decoding used by the parser.
+  License: LICENSE-entities.txt
+  Source: https://github.com/fb55/entities
+  Source package: https://registry.npmjs.org/entities/-/entities-7.0.1.tgz
+
+Bundle generation
+  Tool: esbuild 0.28.2 (build-time only; not needed to run this Mod).
+  Entry: export { renderMermaidSVG } from "beautiful-mermaid";
+  Exact package versions: those listed above.
+  Options: bundle=true, format=esm, platform=neutral, target=es2022,
+    define:global=globalThis, define:window=globalThis, minify=true, charset=utf8,
+    legalComments=inline, sourcemap=false.
+  Before bundling elkjs/lib/elk.bundled.js, apply patchElk from elkjs-herdr.js.
+  The global and window bindings are mapped to globalThis for Herdr's JavaScript host.
+  SVG color and font compatibility is handled by ../mermaid.js.
